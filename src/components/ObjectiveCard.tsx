@@ -6,7 +6,7 @@ import { factionImage } from '@/data/factions';
 import { colorHex } from '@/data/colors';
 import type { Player } from '@/lib/game';
 
-export type CardKind = 'stage1' | 'stage2' | 'secret' | 'custom';
+export type CardKind = 'stage1' | 'stage2' | 'secret' | 'action' | 'custom';
 
 /** Optional blank-frame illustration; probed once per kind. */
 const artCache = new Map<CardKind, Promise<boolean>>();
@@ -64,9 +64,11 @@ export function ObjectiveCard({ kind, def, name, text, points, scorers = [], cla
     >
       <div className="objcard-title">{title}</div>
       <div className="objcard-band objcard-deco" />
-      <div className="objcard-phase" data-phase={phase}>
-        {phase === 'action' ? 'Action Phase' : phase === 'agenda' ? 'Agenda Phase' : 'Status Phase'}
-      </div>
+      {kind !== 'action' && (
+        <div className="objcard-phase" data-phase={phase}>
+          {phase === 'action' ? 'Action Phase' : phase === 'agenda' ? 'Agenda Phase' : 'Status Phase'}
+        </div>
+      )}
       <div className="objcard-panel starfield objcard-deco" />
       <div className="objcard-text" style={scorers.length ? { bottom: many ? '45%' : '38%' } : undefined}>
         {body}
@@ -74,9 +76,11 @@ export function ObjectiveCard({ kind, def, name, text, points, scorers = [], cla
       {scorers.length > 0 && (
         <div className="objcard-tokens">
           {scorers.map((p) => (
-            <span key={p.id} className="objcard-token" style={{ ['--pc' as string]: colorHex(p.color) }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={factionImage(p.factionId)} alt={p.name} />
+            <span key={p.id} className="objcard-token" style={{ ['--pc' as string]: colorHex(p.color) }} title={p.name}>
+              <span className="objcard-token-face">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={factionImage(p.factionId)} alt={p.name} />
+              </span>
             </span>
           ))}
         </div>

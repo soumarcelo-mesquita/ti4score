@@ -126,6 +126,7 @@ export const OBJECTIVES: ObjectiveDef[] = [
     ['Dictate Policy', 'There are 3 or more laws in play.'],
     ['Drive the Debate', 'You or a planet you control are elected by an agenda.'],
   ]),
+
 ];
 
 export const KIND_POINTS: Record<ObjectiveKind, number> = { stage1: 1, stage2: 2, secret: 1 };

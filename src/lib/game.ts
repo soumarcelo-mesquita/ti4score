@@ -20,14 +20,25 @@ export interface Player {
   color: string;
 }
 
+/** Type of a custom VP card (Imperial Rider is an action card). */
+export type CustomCardType = 'action' | 'law' | 'relic' | 'other';
+
+export const CUSTOM_CARD_TYPES: { id: CustomCardType; label: string }[] = [
+  { id: 'action', label: 'Carta de ação' },
+  { id: 'law', label: 'Lei' },
+  { id: 'relic', label: 'Relíquia' },
+  { id: 'other', label: 'Outro' },
+];
+
 export interface PublicObjective {
   uid: string;
   /** Catalogue id; null for a custom objective. */
   defId: string | null;
   kind: 'stage1' | 'stage2' | 'custom';
-  /** Only for custom objectives. */
+  /** Only for custom cards. */
   name?: string;
   text?: string;
+  cardType?: CustomCardType;
   points: number;
   scoredBy: string[];
 }
@@ -39,16 +50,33 @@ export interface ScoredSecret {
   defId: string | null;
 }
 
-export type ExtraKey = 'custodians' | 'support' | 'imperial' | 'other';
+export type ExtraKey = 'custodians' | 'imperial' | 'other';
 
 export const EXTRAS: { key: ExtraKey; label: string; short: string }[] = [
   { key: 'custodians', label: 'Custódios (Mecatol)', short: 'Custódios' },
-  { key: 'support', label: 'Apoio ao Trono', short: 'Apoio' },
   { key: 'imperial', label: 'Imperial', short: 'Imperial' },
   { key: 'other', label: 'Outros (leis, relíquias…)', short: 'Outros' },
 ];
 
 export type Extras = Record<ExtraKey, number>;
+
+/** A Support for the Throne note: each player owns one (their colour) and may give it away. */
+export interface Support {
+  uid: string;
+  /** Owner of the note (its colour). */
+  fromId: string;
+  /** Player who holds it and gains the point. */
+  toId: string;
+}
+
+export interface Law {
+  uid: string;
+  name: string;
+  /** Player elected by the law, if any. */
+  electedPlayerId: string | null;
+  /** Free text for planet / other elected outcome. */
+  electedText: string;
+}
 
 export interface Clock {
   /** Host epoch ms when the clock was last started; null when paused. */
@@ -70,9 +98,11 @@ export interface GameState {
   objectives: PublicObjective[];
   secrets: ScoredSecret[];
   extras: Record<string, Extras>;
+  supports: Support[];
+  laws: Law[];
 }
 
-export const EMPTY_EXTRAS: Extras = { custodians: 0, support: 0, imperial: 0, other: 0 };
+export const EMPTY_EXTRAS: Extras = { custodians: 0, imperial: 0, other: 0 };
 
 export function initialState(): GameState {
   return {
@@ -86,7 +116,20 @@ export function initialState(): GameState {
     objectives: [],
     secrets: [],
     extras: {},
+    supports: [],
+    laws: [],
   };
+}
+
+/** Fill fields added after a game was saved. */
+export function normalizeState(s: GameState): GameState {
+  // Older saves stored Imperial Rider as kind 'action' with a catalogue id.
+  const objectives = (s.objectives ?? []).map((o) =>
+    (o.kind as string) === 'action'
+      ? { ...o, kind: 'custom' as const, defId: null, name: o.name ?? 'Imperial Rider', cardType: 'action' as const }
+      : o,
+  );
+  return { ...initialState(), ...s, objectives, supports: s.supports ?? [], laws: s.laws ?? [] };
 }
 
 export type Action =
@@ -94,12 +137,16 @@ export type Action =
   | { type: 'updatePlayer'; player: Player }
   | { type: 'setTarget'; target: number }
   | { type: 'reveal'; defId: string }
-  | { type: 'addCustom'; name: string; text: string; points: number }
+  | { type: 'addCustom'; name: string; cardType: CustomCardType; points: number }
   | { type: 'removeObjective'; uid: string }
   | { type: 'toggleScore'; uid: string; playerId: string }
   | { type: 'addSecret'; playerId: string; defId: string | null }
   | { type: 'removeSecret'; uid: string }
   | { type: 'setExtra'; playerId: string; key: ExtraKey; value: number }
+  | { type: 'giveSupport'; fromId: string; toId: string }
+  | { type: 'removeSupport'; uid: string }
+  | { type: 'addLaw'; name: string; electedPlayerId: string | null; electedText: string }
+  | { type: 'removeLaw'; uid: string }
   | { type: 'setSpeaker'; playerId: string }
   | { type: 'setRound'; round: number }
   | { type: 'setPhase'; phase: Phase }
@@ -129,7 +176,8 @@ function startRound(state: GameState, round: number, now: number): GameState {
 }
 
 /** Pure reducer; `now` is the host clock so every timer stamp comes from one machine. */
-export function reduce(state: GameState, action: Action, now: number): GameState {
+export function reduce(prev: GameState, action: Action, now: number): GameState {
+  const state = normalizeState(prev);
   switch (action.type) {
     case 'setup': {
       const extras: Record<string, Extras> = {};
@@ -145,6 +193,12 @@ export function reduce(state: GameState, action: Action, now: number): GameState
           scoredBy: o.scoredBy.filter((id) => action.players.some((p) => p.id === id)),
         })),
         secrets: state.secrets.filter((s) => action.players.some((p) => p.id === s.playerId)),
+        supports: state.supports.filter(
+          (s) => action.players.some((p) => p.id === s.fromId) && action.players.some((p) => p.id === s.toId),
+        ),
+        laws: state.laws.map((l) =>
+          l.electedPlayerId && !action.players.some((p) => p.id === l.electedPlayerId) ? { ...l, electedPlayerId: null } : l,
+        ),
       };
     }
     case 'updatePlayer':
@@ -167,7 +221,7 @@ export function reduce(state: GameState, action: Action, now: number): GameState
         ...state,
         objectives: [
           ...state.objectives,
-          { uid: uid(), defId: null, kind: 'custom', name: action.name, text: action.text, points: action.points, scoredBy: [] },
+          { uid: uid(), defId: null, kind: 'custom', name: action.name, cardType: action.cardType, points: action.points, scoredBy: [] },
         ],
       };
     case 'removeObjective':
@@ -206,6 +260,25 @@ export function reduce(state: GameState, action: Action, now: number): GameState
       };
       return { ...state, extras };
     }
+    case 'giveSupport':
+      if (action.fromId === action.toId) return state;
+      // A note can only be in one play area at a time.
+      return {
+        ...state,
+        supports: [
+          ...state.supports.filter((s) => s.fromId !== action.fromId),
+          { uid: uid(), fromId: action.fromId, toId: action.toId },
+        ],
+      };
+    case 'removeSupport':
+      return { ...state, supports: state.supports.filter((s) => s.uid !== action.uid) };
+    case 'addLaw':
+      return {
+        ...state,
+        laws: [...state.laws, { uid: uid(), name: action.name, electedPlayerId: action.electedPlayerId, electedText: action.electedText }],
+      };
+    case 'removeLaw':
+      return { ...state, laws: state.laws.filter((l) => l.uid !== action.uid) };
     case 'setSpeaker':
       return { ...state, speakerId: action.playerId };
     case 'setRound':
@@ -229,7 +302,7 @@ export function reduce(state: GameState, action: Action, now: number): GameState
       return { ...state, clock: { runningSince: null, accumulated: 0, roundStart: 0 } };
     case 'newGame':
       return { ...initialState(), players: state.players, target: state.target, speakerId: state.speakerId,
-        extras: Object.fromEntries(state.players.map((p) => [p.id, { ...EMPTY_EXTRAS }])) };
+        extras: Object.fromEntries(state.players.map((p) => [p.id, { ...EMPTY_EXTRAS }])), supports: [], laws: [] };
   }
 }
 
@@ -238,6 +311,7 @@ export interface ScoreLine {
   total: number;
   publicPts: number;
   secretPts: number;
+  supportPts: number;
   extras: Extras;
 }
 
@@ -247,9 +321,15 @@ export function scores(state: GameState): ScoreLine[] {
       .filter((o) => o.scoredBy.includes(player.id))
       .reduce((sum, o) => sum + o.points, 0);
     const secretPts = state.secrets.filter((s) => s.playerId === player.id).length;
-    const extras = { ...EMPTY_EXTRAS, ...state.extras[player.id] };
-    const total = publicPts + secretPts + extras.custodians + extras.support + extras.imperial + extras.other;
-    return { player, total, publicPts, secretPts, extras };
+    const supportPts = (state.supports ?? []).filter((s) => s.toId === player.id).length;
+    const stored = state.extras[player.id] ?? {};
+    const extras: Extras = {
+      custodians: stored.custodians ?? 0,
+      imperial: stored.imperial ?? 0,
+      other: stored.other ?? 0,
+    };
+    const total = publicPts + secretPts + supportPts + extras.custodians + extras.imperial + extras.other;
+    return { player, total, publicPts, secretPts, supportPts, extras };
   });
 }
 

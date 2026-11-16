@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { initialState, reduce, type Action, type GameState } from '@/lib/game';
+import { initialState, normalizeState, reduce, type Action, type GameState } from '@/lib/game';
 
 /**
  * Sync model: the TV page is the host and owns the authoritative state
@@ -34,7 +34,7 @@ function loadSaved(code: string): GameState | null {
     const raw = localStorage.getItem(storageKey(code));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as GameState;
-    return parsed?.v === 1 ? parsed : null;
+    return parsed?.v === 1 ? normalizeState(parsed) : null;
   } catch {
     return null;
   }
@@ -125,7 +125,7 @@ export function useControllerGame(code: string) {
     const ch = supabase.channel(channelName(code), { config: { broadcast: { self: false } } });
     ch.on('broadcast', { event: 'state' }, ({ payload }) => {
       const msg = payload as StateMsg;
-      setState(msg.state);
+      setState(normalizeState(msg.state));
       setSkew(Date.now() - msg.sentAt);
       setLastSeen(Date.now());
     }).subscribe((s) => {

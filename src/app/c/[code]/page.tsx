@@ -6,7 +6,8 @@ import Link from 'next/link';
 import { useControllerGame } from '@/lib/sync';
 import { useNow } from '@/lib/useNow';
 import {
-  elapsed, formatDuration, normalizeCode, phaseLabel, PHASES, scores, uid,
+  elapsed, formatDuration, normalizeCode, scores, uid, CUSTOM_CARD_TYPES,
+  type CustomCardType,
   type Action, type ExtraKey, type GameState, type Player, type PublicObjective,
 } from '@/lib/game';
 import { OBJECTIVES, getObjective, type ObjectiveKind } from '@/data/objectives';
@@ -91,7 +92,7 @@ function Header({ state, code, status, skew }: { state: GameState; code: string;
           {status === 'offline' && <span className="text-red-400">TV desconectada</span>}
         </span>
         <span>
-          Rodada {state.round} · {phaseLabel(state.phase)} · <Clock state={state} skew={skew} />
+          Rodada {state.round} · <Clock state={state} skew={skew} />
         </span>
       </div>
       <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
@@ -137,6 +138,8 @@ function Stepper({ value, onChange, min = 0 }: { value: number; onChange: (v: nu
 function PointsTab({ state, dispatch }: { state: GameState; dispatch: Dispatch }) {
   const lines = scores(state);
   const [secretFor, setSecretFor] = useState<Player | null>(null);
+  const [supportFor, setSupportFor] = useState<Player | null>(null);
+  const playerById = new Map(state.players.map((x) => [x.id, x]));
   const setExtra = (playerId: string, key: ExtraKey, value: number) => dispatch({ type: 'setExtra', playerId, key, value });
 
   return (
@@ -176,20 +179,49 @@ function PointsTab({ state, dispatch }: { state: GameState; dispatch: Dispatch }
                   </button>
                 )}
               </div>
-              <Row label="Custódios (Mecatol)">
-                <button
-                  onClick={() => setExtra(p.id, 'custodians', l.extras.custodians ? 0 : 1)}
-                  className={`h-9 rounded-lg px-4 font-semibold ${l.extras.custodians ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-300'}`}
-                >
-                  {l.extras.custodians ? 'Sim · 1 PV' : 'Não'}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-slate-300">Apoio ao Trono</span>
+                {state.supports
+                  .filter((s) => s.toId === p.id)
+                  .map((s) => {
+                    const from = playerById.get(s.fromId);
+                    if (!from) return null;
+                    return (
+                      <button
+                        key={s.uid}
+                        onClick={() => confirm(`Devolver o Apoio ao Trono de ${from.name}?`) && dispatch({ type: 'removeSupport', uid: s.uid })}
+                        className="flex items-center gap-1 rounded-md py-0.5 pl-0.5 pr-2 text-xs font-semibold text-white"
+                        style={{ background: `${colorHex(from.color)}33` }}
+                      >
+                        <FactionToken player={from} size={20} /> {from.name} ✕
+                      </button>
+                    );
+                  })}
+                <button onClick={() => setSupportFor(p)} className="rounded-md border border-sky-500/40 px-2 py-1 text-xs font-semibold text-sky-300">
+                  + Apoio
                 </button>
-              </Row>
-              <Row label="Apoio ao Trono">
-                <Stepper value={l.extras.support} onChange={(v) => setExtra(p.id, 'support', v)} />
-              </Row>
-              <Row label="Imperial">
-                <Stepper value={l.extras.imperial} onChange={(v) => setExtra(p.id, 'imperial', v)} />
-              </Row>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  role="radio"
+                  aria-checked={l.extras.custodians > 0}
+                  onClick={() => setExtra(p.id, 'custodians', l.extras.custodians ? 0 : 1)}
+                  className="flex items-center gap-2 text-slate-300"
+                >
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border-2 ${
+                      l.extras.custodians ? 'border-amber-400' : 'border-slate-600'
+                    }`}
+                  >
+                    {l.extras.custodians > 0 && <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />}
+                  </span>
+                  Custódios
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300">Imperial</span>
+                  <Stepper value={l.extras.imperial} onChange={(v) => setExtra(p.id, 'imperial', v)} />
+                </div>
+              </div>
               <Row label="Outros (leis, relíquias…)">
                 <Stepper value={l.extras.other} min={-20} onChange={(v) => setExtra(p.id, 'other', v)} />
               </Row>
@@ -197,6 +229,37 @@ function PointsTab({ state, dispatch }: { state: GameState; dispatch: Dispatch }
           </section>
         );
       })}
+
+      {supportFor && (
+        <Sheet title={`Apoio ao Trono para ${supportFor.name}`} onClose={() => setSupportFor(null)}>
+          <p className="mb-3 text-sm text-slate-400">De quem é a nota (cor) que {supportFor.name} recebeu?</p>
+          <div className="flex flex-col gap-2">
+            {state.players
+              .filter((x) => x.id !== supportFor.id)
+              .map((from) => {
+                const holder = state.supports.find((s) => s.fromId === from.id);
+                const holderName = holder ? playerById.get(holder.toId)?.name : null;
+                const already = holder?.toId === supportFor.id;
+                return (
+                  <button
+                    key={from.id}
+                    disabled={already}
+                    onClick={() => {
+                      dispatch({ type: 'giveSupport', fromId: from.id, toId: supportFor.id });
+                      setSupportFor(null);
+                    }}
+                    className="flex items-center gap-3 rounded-lg bg-slate-900 px-3 py-2.5 text-left disabled:opacity-40"
+                    style={{ borderLeft: `4px solid ${colorHex(from.color)}` }}
+                  >
+                    <FactionToken player={from} size={30} />
+                    <span className="flex-1 font-semibold text-white">{from.name}</span>
+                    {holderName && <span className="text-xs text-slate-400">{already ? 'já recebeu' : `está com ${holderName}`}</span>}
+                  </button>
+                );
+              })}
+          </div>
+        </Sheet>
+      )}
 
       {secretFor && (
         <Picker
@@ -232,7 +295,7 @@ function ObjectivesTab({ state, dispatch }: { state: GameState; dispatch: Dispat
   const groups: { kind: PublicObjective['kind']; label: string; color: string }[] = [
     { kind: 'stage1', label: 'Estágio I', color: 'text-amber-400' },
     { kind: 'stage2', label: 'Estágio II', color: 'text-blue-400' },
-    { kind: 'custom', label: 'Outros', color: 'text-teal-400' },
+    { kind: 'custom', label: 'Cartas personalizadas', color: 'text-teal-400' },
   ];
 
   return (
@@ -261,7 +324,7 @@ function ObjectivesTab({ state, dispatch }: { state: GameState; dispatch: Dispat
           Revelar Estágio II
         </button>
         <button onClick={() => setCustomOpen(true)} className="col-span-2 rounded-lg border border-teal-500/50 py-3 font-semibold text-teal-300">
-          Objetivo personalizado
+          Personalizado
         </button>
       </div>
 
@@ -280,8 +343,8 @@ function ObjectivesTab({ state, dispatch }: { state: GameState; dispatch: Dispat
       {customOpen && (
         <CustomObjectiveForm
           onClose={() => setCustomOpen(false)}
-          onSubmit={(name, text, points) => {
-            dispatch({ type: 'addCustom', name, text, points });
+          onSubmit={(name, cardType, points) => {
+            dispatch({ type: 'addCustom', name, cardType, points });
             setCustomOpen(false);
           }}
         />
@@ -294,6 +357,7 @@ function ObjectiveRow({ o, players, dispatch }: { o: PublicObjective; players: P
   const def = getObjective(o.defId);
   const name = def?.name ?? o.name ?? 'Objetivo';
   const accent = o.kind === 'stage1' ? 'border-amber-500/40' : o.kind === 'stage2' ? 'border-blue-500/40' : 'border-teal-500/40';
+  const typeLabel = CUSTOM_CARD_TYPES.find((t) => t.id === o.cardType)?.label;
   return (
     <div className={`rounded-xl border ${accent} bg-slate-900/70 p-3`}>
       <div className="flex items-start gap-2">
@@ -301,7 +365,7 @@ function ObjectiveRow({ o, players, dispatch }: { o: PublicObjective; players: P
           <p className="font-display text-sm font-bold uppercase text-white">
             {name} <span className="text-slate-400">· {o.points} PV</span>
           </p>
-          <p className="mt-0.5 text-sm text-slate-400">{def?.text ?? o.text}</p>
+          <p className="mt-0.5 text-sm text-slate-400">{def?.text ?? typeLabel ?? o.text}</p>
         </div>
         <button
           onClick={() => confirm(`Remover "${name}" da mesa?`) && dispatch({ type: 'removeObjective', uid: o.uid })}
@@ -403,24 +467,61 @@ function Picker({
   );
 }
 
-function CustomObjectiveForm({ onSubmit, onClose }: { onSubmit: (name: string, text: string, points: number) => void; onClose: () => void }) {
+const CUSTOM_PRESETS: { name: string; cardType: CustomCardType; points: number }[] = [
+  { name: 'Imperial Rider', cardType: 'action', points: 1 },
+];
+
+function CustomObjectiveForm({
+  onSubmit, onClose,
+}: {
+  onSubmit: (name: string, cardType: CustomCardType, points: number) => void;
+  onClose: () => void;
+}) {
   const [name, setName] = useState('');
-  const [text, setText] = useState('');
+  const [cardType, setCardType] = useState<CustomCardType>('action');
   const [points, setPoints] = useState(1);
   return (
-    <Sheet title="Objetivo personalizado" onClose={onClose}>
-      <div className="flex flex-col gap-3">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome (ex.: Classified Document Leaks)" className={inputCls} />
-        <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Texto da carta (opcional)" rows={3} className={inputCls} />
+    <Sheet title="Carta personalizada" onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-2">
+          {CUSTOM_PRESETS.map((p) => (
+            <button
+              key={p.name}
+              onClick={() => {
+                setName(p.name);
+                setCardType(p.cardType);
+                setPoints(p.points);
+              }}
+              className="rounded-full border border-red-500/50 px-3 py-1.5 text-sm font-semibold text-red-300"
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Título da carta" className={inputCls} />
+        <div>
+          <p className="mb-1.5 text-sm text-slate-300">Tipo</p>
+          <div className="grid grid-cols-2 gap-2">
+            {CUSTOM_CARD_TYPES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setCardType(t.id)}
+                className={`rounded-lg py-2.5 text-sm font-semibold ${cardType === t.id ? 'bg-teal-400 text-slate-950' : 'bg-slate-800 text-slate-300'}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <Row label="Pontos">
-          <Stepper value={points} min={1} onChange={setPoints} />
+          <Stepper value={points} min={-5} onChange={(v) => setPoints(v === 0 ? (points > 0 ? -1 : 1) : Math.min(10, v))} />
         </Row>
         <button
           disabled={!name.trim()}
-          onClick={() => onSubmit(name.trim(), text.trim(), points)}
+          onClick={() => onSubmit(name.trim(), cardType, points)}
           className="rounded-lg bg-teal-500 py-3 font-semibold text-slate-950 disabled:opacity-40"
         >
-          Adicionar à mesa
+          Adicionar
         </button>
       </div>
     </Sheet>
@@ -435,23 +536,15 @@ function GameTab({ state, dispatch, skew, onEditPlayers }: { state: GameState; d
   const total = elapsed(state.clock, now);
   return (
     <div className="flex flex-col gap-4">
-      <Card title="Rodada e fase">
-        <Row label="Rodada">
+      <Card title="Rodada">
+        <Row label="Rodada atual">
           <Stepper value={state.round} min={1} onChange={(round) => dispatch({ type: 'setRound', round })} />
         </Row>
-        <div className="mt-3 grid grid-cols-4 gap-1">
-          {PHASES.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => dispatch({ type: 'setPhase', phase: p.id })}
-              className={`rounded-md py-2 text-xs font-semibold ${state.phase === p.id ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-400'}`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <button onClick={() => dispatch({ type: 'nextPhase' })} className="mt-3 w-full rounded-lg bg-amber-500 py-3 font-semibold text-slate-950">
-          Próxima fase →
+        <button
+          onClick={() => dispatch({ type: 'setRound', round: state.round + 1 })}
+          className="mt-3 w-full rounded-lg bg-amber-500 py-3 font-semibold text-slate-950"
+        >
+          Próxima rodada →
         </button>
       </Card>
 
@@ -488,22 +581,6 @@ function GameTab({ state, dispatch, skew, onEditPlayers }: { state: GameState; d
             ))}
           </div>
         </Row>
-        <div className="mt-3">
-          <p className="mb-1.5 text-sm text-slate-300">Orador</p>
-          <div className="flex flex-wrap gap-2">
-            {state.players.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => dispatch({ type: 'setSpeaker', playerId: p.id })}
-                className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-sm ${
-                  state.speakerId === p.id ? 'bg-slate-100 text-slate-900' : 'bg-slate-800 text-slate-400'
-                }`}
-              >
-                <FactionToken player={p} size={24} /> {p.name}
-              </button>
-            ))}
-          </div>
-        </div>
         <button onClick={onEditPlayers} className="mt-4 w-full rounded-lg border border-slate-700 py-3 text-slate-200">
           Editar jogadores
         </button>
@@ -553,7 +630,6 @@ function SetupForm({ state, onSubmit, onCancel }: { state: GameState; onSubmit: 
       : Array.from({ length: 6 }, (_, i) => ({ id: uid(), name: '', factionId: '', color: PLAYER_COLORS[i].id })),
   );
   const [target, setTarget] = useState(state.target);
-  const [speakerIdx, setSpeakerIdx] = useState(() => Math.max(0, state.players.findIndex((p) => p.id === state.speakerId)));
 
   const setCount = (n: number) =>
     setPlayers((prev) => {
@@ -598,12 +674,6 @@ function SetupForm({ state, onSubmit, onCancel }: { state: GameState; onSubmit: 
           <div className="flex items-center gap-2">
             <span className="font-display w-5 text-sm font-bold text-slate-500">{i + 1}</span>
             <input value={p.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="Nome" className={inputCls} />
-            <button
-              onClick={() => setSpeakerIdx(i)}
-              className={`shrink-0 rounded-lg px-2 py-2.5 text-xs font-semibold ${speakerIdx === i ? 'bg-slate-100 text-slate-900' : 'bg-slate-800 text-slate-500'}`}
-            >
-              Orador
-            </button>
           </div>
           <select
             value={p.factionId}
@@ -640,7 +710,7 @@ function SetupForm({ state, onSubmit, onCancel }: { state: GameState; onSubmit: 
             type: 'setup',
             players: players.map((p) => ({ ...p, name: p.name.trim() })),
             target,
-            speakerId: players[speakerIdx]?.id ?? null,
+            speakerId: null,
           })
         }
         className="rounded-lg bg-amber-500 py-3.5 font-semibold text-slate-950 disabled:opacity-40"
