@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-display: var(--font-display);
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --background: #02040b;
+  --foreground: #e2e8f0;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), ui-sans-serif, sans-serif;
+  letter-spacing: 0.04em;
+}
+
+/* Subtle starfield used behind pages and inside cards. */
+.starfield {
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,.55), transparent 60%),
+    radial-gradient(1px 1px at 72% 34%, rgba(255,255,255,.45), transparent 60%),
+    radial-gradient(1px 1px at 38% 72%, rgba(255,255,255,.4), transparent 60%),
+    radial-gradient(1.5px 1.5px at 88% 82%, rgba(255,255,255,.5), transparent 60%),
+    radial-gradient(1px 1px at 54% 10%, rgba(255,255,255,.35), transparent 60%),
+    radial-gradient(1px 1px at 22% 48%, rgba(255,255,255,.3), transparent 60%),
+    radial-gradient(1px 1px at 92% 56%, rgba(255,255,255,.35), transparent 60%);
+  background-size: 180px 180px;
+}
+
+/* ───────────── Objective card ─────────────
+ * Proportions follow the printed card (2:3). When a blank frame
+ * illustration exists at /img/objectives/<kind>.webp it is drawn behind
+ * the text and the CSS frame is hidden (.has-art).
+ */
+.objcard {
+  --c: #f59e0b;
+  --title: #fbbf24;
+  --glow: rgba(245, 158, 11, .55);
+  container-type: inline-size;
+  position: relative;
+  aspect-ratio: 2 / 3;
+  max-height: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 2.5cqw;
+  background:
+    radial-gradient(ellipse 60% 18% at 50% 86%, var(--glow), transparent 70%),
+    linear-gradient(180deg, #050608 0%, #050608 13%, color-mix(in srgb, var(--c) 30%, #050608) 22%, #07080c 34%, #07080c 70%, color-mix(in srgb, var(--c) 35%, #050608) 82%, #050608 100%);
+  box-shadow: inset 0 0 0 0.9cqw color-mix(in srgb, var(--c) 70%, transparent), 0 0 3cqw -1cqw var(--glow);
+  color: #fff;
+  user-select: none;
+}
+.objcard[data-kind="stage2"] { --c: #3b82f6; --title: #a5b4fc; --glow: rgba(59, 130, 246, .55); }
+.objcard[data-kind="secret"] { --c: #ef4444; --title: #fca5a5; --glow: rgba(239, 68, 68, .6); }
+.objcard[data-kind="custom"] { --c: #14b8a6; --title: #5eead4; --glow: rgba(20, 184, 166, .5); }
+
+.objcard.has-art { background-size: 100% 100%; background-repeat: no-repeat; box-shadow: none; }
+.objcard.has-art .objcard-deco { display: none; }
+
+.objcard-title {
+  position: absolute; inset: 1.5% 6% auto 6%; height: 13%;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-family: var(--font-display), sans-serif; font-weight: 700; text-transform: uppercase;
+  font-size: 6.6cqw; line-height: 1.05; color: var(--title);
+  text-shadow: 0 0 2cqw rgba(0,0,0,.9);
+}
+.objcard-phase {
+  position: absolute; left: 0; right: 0; top: 16.5%; height: 6%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display), sans-serif; font-weight: 700; text-transform: uppercase;
+  font-size: 5cqw; letter-spacing: .06em;
+}
+.objcard-phase[data-phase="action"] { color: #f87171; }
+.objcard-phase[data-phase="agenda"] { color: #7dd3fc; }
+.objcard-band {
+  position: absolute; left: 4%; right: 4%; top: 16.5%; height: 6%;
+  background: linear-gradient(90deg, transparent, rgba(0,0,0,.85) 18%, rgba(0,0,0,.85) 82%, transparent);
+  border-top: 0.5cqw solid var(--c); border-bottom: 0.5cqw solid var(--c);
+  clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%);
+}
+.objcard-panel {
+  position: absolute; left: 5%; right: 5%; top: 27%; bottom: 23%;
+  background-color: #050507;
+  border: 0.6cqw solid color-mix(in srgb, var(--c) 80%, transparent);
+  clip-path: polygon(5% 0, 95% 0, 100% 4%, 100% 96%, 95% 100%, 5% 100%, 0 96%, 0 4%);
+}
+.objcard-text {
+  position: absolute; left: 8%; right: 8%; top: 28%; bottom: 25%;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  font-weight: 600; font-size: 6.6cqw; line-height: 1.22;
+}
+.objcard-vp {
+  position: absolute; left: 50%; top: 85%; transform: translate(-50%, -50%);
+  width: 26cqw; height: 26cqw; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display), sans-serif; font-weight: 900; font-size: 17cqw; line-height: 1;
+  color: #fff; text-shadow: 0 0 3cqw var(--c), 0 0 6cqw var(--c);
+}
+.objcard-vp.objcard-deco-ring {
+  background: radial-gradient(circle, color-mix(in srgb, var(--c) 35%, #000) 0%, #07080c 70%);
+  box-shadow: 0 0 0 0.8cqw color-mix(in srgb, var(--c) 75%, transparent), 0 0 5cqw var(--glow);
+}
+.has-art .objcard-vp.objcard-deco-ring { background: none; box-shadow: none; }
+.objcard-vplabel {
+  position: absolute; left: 0; right: 0; bottom: 1.5%; height: 5%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display), sans-serif; font-weight: 700; text-transform: uppercase;
+  font-size: 4.8cqw; color: var(--title);
+}
+.objcard-tokens {
+  position: absolute; left: 7%; right: 7%; bottom: 24.5%;
+  display: flex; flex-wrap: wrap-reverse; justify-content: center; gap: 1.5cqw;
+}
+.objcard-token {
+  width: 15cqw; height: 15cqw; border-radius: 50%;
+  background: #0b1020; padding: 1.2cqw;
+  box-shadow: 0 0 0 0.9cqw var(--pc), 0 0 3cqw var(--pc);
+}
+.objcard-token img { width: 100%; height: 100%; object-fit: contain; }
+.objcard.dim .objcard-text { opacity: .55; }
+
+/* Unrevealed slot */
+.objslot {
+  container-type: inline-size;
+  aspect-ratio: 2 / 3; max-height: 100%; max-width: 100%;
+  border-radius: 2.5cqw;
+  border: 1px dashed rgba(148,163,184,.25);
+  background: rgba(15,23,42,.35);
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(148,163,184,.18);
+  font-family: var(--font-display), sans-serif; font-size: 12cqw; font-weight: 700;
+}
