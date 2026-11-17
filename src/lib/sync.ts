@@ -1,159 +1,193 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { initialState, normalizeState, reduce, type Action, type GameState } from '@/lib/game';
 
 /**
- * Sync model: the TV page is the host and owns the authoritative state
- * (persisted in its localStorage). Phones send actions over a Supabase
- * Realtime broadcast channel; the host applies them and broadcasts the
- * full state back. No database table is needed.
+ * Sync model: each game is one row in the Supabase `scoreboards` table
+ * (code, state jsonb, version). Any client — TV or phone — applies an action
+ * with the shared reducer and writes the new state with a compare-and-swap on
+ * `version`; on a conflict it re-reads the row and tries again. Every client
+ * subscribes to the row through Realtime, so the TV is no longer required for
+ * phones to keep scoring, and the game survives any device going away.
  */
 
-interface StateMsg {
+const TABLE = 'scoreboards';
+const MAX_RETRIES = 5;
+
+export type LinkStatus = 'connecting' | 'online' | 'offline' | 'missing' | 'error';
+
+interface Row {
   state: GameState;
-  /** Host clock when sent — lets controllers correct their clock skew. */
-  sentAt: number;
+  version: number;
 }
 
-const HEARTBEAT_MS = 10_000;
-const STALE_MS = 25_000;
-
-function channelName(code: string) {
-  return `ti4score:${code}`;
-}
-
-function storageKey(code: string) {
-  return `ti4score:game:${code}`;
-}
-
-function loadSaved(code: string): GameState | null {
+/** Game saved by the previous localStorage-only version, used to seed the row once. */
+function legacyLocalGame(code: string): GameState | null {
   try {
-    const raw = localStorage.getItem(storageKey(code));
+    const raw = localStorage.getItem(`ti4score:game:${code}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as GameState;
-    return parsed?.v === 1 ? normalizeState(parsed) : null;
+    return parsed?.v === 1 ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function save(code: string, state: GameState) {
-  try {
-    localStorage.setItem(storageKey(code), JSON.stringify(state));
-  } catch {
-    /* storage unavailable — the game still runs, just not across reloads */
-  }
+async function fetchRow(code: string): Promise<{ row: Row | null; error: string | null }> {
+  const { data, error } = await supabase.from(TABLE).select('state, version').eq('code', code).maybeSingle();
+  if (error) return { row: null, error: error.message };
+  return { row: data ? { state: normalizeState(data.state as GameState), version: data.version as number } : null, error: null };
 }
 
-export type LinkStatus = 'connecting' | 'online' | 'offline';
-
-export function useHostGame(code: string) {
+/**
+ * @param create when true (the TV), a missing game is created; phones only join existing games.
+ */
+export function useGame(code: string, { create }: { create: boolean }) {
   const [state, setState] = useState<GameState | null>(null);
   const [status, setStatus] = useState<LinkStatus>('connecting');
-  const channelRef = useRef<RealtimeChannel | null>(null);
-  const stateRef = useRef<GameState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const rowRef = useRef<Row | null>(null);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
 
-  const broadcast = useCallback(() => {
-    const ch = channelRef.current;
-    if (!ch || !stateRef.current) return;
-    const msg: StateMsg = { state: stateRef.current, sentAt: Date.now() };
-    void ch.send({ type: 'broadcast', event: 'state', payload: msg });
+  const accept = useCallback((row: Row) => {
+    // Ignore stale echoes (e.g. a Realtime event older than our own write).
+    if (rowRef.current && row.version < rowRef.current.version) return;
+    rowRef.current = row;
+    setState(row.state);
   }, []);
 
-  const dispatch = useCallback(
-    (action: Action) => {
-      setState((prev) => {
-        const next = reduce(prev ?? initialState(), action, Date.now());
-        stateRef.current = next;
-        return next;
-      });
-    },
-    [],
-  );
+  const refresh = useCallback(async () => {
+    const { row, error: err } = await fetchRow(code);
+    if (err) {
+      setError(err);
+      setStatus('error');
+      return null;
+    }
+    if (row) accept(row);
+    return row;
+  }, [code, accept]);
 
-  // Load saved game once.
+  // Initial load (and creation for the TV).
   useEffect(() => {
-    const saved = loadSaved(code) ?? initialState();
-    stateRef.current = saved;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate from localStorage after mount
-    setState(saved);
-  }, [code]);
+    let alive = true;
+    rowRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset when the code changes
+    setState(null);
+    (async () => {
+      let { row, error: err } = await fetchRow(code);
+      if (!alive) return;
+      if (err) {
+        setError(err);
+        setStatus('error');
+        return;
+      }
+      if (!row && create) {
+        const seed = legacyLocalGame(code) ?? initialState();
+        const ins = await supabase.from(TABLE).upsert({ code, state: seed, version: 0 }, { onConflict: 'code', ignoreDuplicates: true });
+        if (!alive) return;
+        if (ins.error) {
+          setError(ins.error.message);
+          setStatus('error');
+          return;
+        }
+        ({ row, error: err } = await fetchRow(code));
+        if (!alive) return;
+      }
+      if (!row) {
+        setStatus('missing');
+        return;
+      }
+      accept(row);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [code, create, accept]);
 
-  // Persist + broadcast on every change.
+  // Live updates.
   useEffect(() => {
-    if (!state) return;
-    save(code, state);
-    broadcast();
-  }, [code, state, broadcast]);
-
-  useEffect(() => {
-    const ch = supabase.channel(channelName(code), { config: { broadcast: { self: false } } });
-    ch.on('broadcast', { event: 'action' }, ({ payload }) => dispatch(payload as Action))
-      .on('broadcast', { event: 'hello' }, () => broadcast())
+    const ch = supabase
+      .channel(`scoreboard-${code}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE, filter: `code=eq.${code}` }, (payload) => {
+        const n = payload.new as { state?: GameState; version?: number } | undefined;
+        if (n?.state && typeof n.version === 'number') {
+          accept({ state: normalizeState(n.state), version: n.version });
+          setStatus((s) => (s === 'missing' ? 'online' : s));
+        }
+      })
       .subscribe((s) => {
         if (s === 'SUBSCRIBED') {
-          setStatus('online');
-          broadcast();
+          setStatus((prev) => (prev === 'missing' || prev === 'error' ? prev : 'online'));
+          void refresh(); // catch up on anything missed while (re)connecting
         } else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
-          setStatus('offline');
+          setStatus((prev) => (prev === 'missing' || prev === 'error' ? prev : 'offline'));
         }
       });
-    channelRef.current = ch;
-    const beat = setInterval(broadcast, HEARTBEAT_MS);
+
+    // Phones sleep: re-read the row when the page comes back.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
-      clearInterval(beat);
-      channelRef.current = null;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
       void supabase.removeChannel(ch);
     };
-  }, [code, dispatch, broadcast]);
+  }, [code, accept, refresh]);
 
-  return { state, dispatch, status };
+  const apply = useCallback(
+    async (action: Action) => {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const cur = rowRef.current ?? (await refresh());
+        if (!cur) return;
+        const next = reduce(cur.state, action, Date.now());
+        setState(next); // optimistic
+        const { data, error: err } = await supabase
+          .from(TABLE)
+          .update({ state: next, version: cur.version + 1, updated_at: new Date().toISOString() })
+          .eq('code', code)
+          .eq('version', cur.version)
+          .select('state, version')
+          .maybeSingle();
+        if (err) {
+          setError(err.message);
+          setStatus('error');
+          return;
+        }
+        if (data) {
+          accept({ state: normalizeState(data.state as GameState), version: data.version as number });
+          return;
+        }
+        // Someone else wrote first: reload and replay the action on top of theirs.
+        rowRef.current = null;
+        await refresh();
+      }
+      await refresh();
+    },
+    [code, accept, refresh],
+  );
+
+  // Serialise writes from this device so quick taps don't conflict with each other.
+  const dispatch = useCallback(
+    (action: Action) => {
+      queueRef.current = queueRef.current.then(() => apply(action)).catch(() => undefined);
+    },
+    [apply],
+  );
+
+  return { state, dispatch, status, error, skew: 0 };
 }
 
+/** TV: creates the game if it does not exist yet. */
+export function useHostGame(code: string) {
+  return useGame(code, { create: true });
+}
+
+/** Phone: joins an existing game only. */
 export function useControllerGame(code: string) {
-  const [state, setState] = useState<GameState | null>(null);
-  const [lastSeen, setLastSeen] = useState(0);
-  const [subscribed, setSubscribed] = useState(false);
-  const [skew, setSkew] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
-  const channelRef = useRef<RealtimeChannel | null>(null);
-
-  useEffect(() => {
-    const ch = supabase.channel(channelName(code), { config: { broadcast: { self: false } } });
-    ch.on('broadcast', { event: 'state' }, ({ payload }) => {
-      const msg = payload as StateMsg;
-      setState(normalizeState(msg.state));
-      setSkew(Date.now() - msg.sentAt);
-      setLastSeen(Date.now());
-    }).subscribe((s) => {
-      if (s === 'SUBSCRIBED') {
-        setSubscribed(true);
-        void ch.send({ type: 'broadcast', event: 'hello', payload: {} });
-      } else if (s === 'CHANNEL_ERROR' || s === 'TIMED_OUT' || s === 'CLOSED') {
-        setSubscribed(false);
-      }
-    });
-    channelRef.current = ch;
-    const tick = setInterval(() => setNow(Date.now()), 5_000);
-    return () => {
-      clearInterval(tick);
-      channelRef.current = null;
-      void supabase.removeChannel(ch);
-    };
-  }, [code]);
-
-  const dispatch = useCallback((action: Action) => {
-    void channelRef.current?.send({ type: 'broadcast', event: 'action', payload: action });
-  }, []);
-
-  const status: LinkStatus = !subscribed
-    ? 'connecting'
-    : lastSeen && now - lastSeen < STALE_MS
-      ? 'online'
-      : 'offline';
-
-  return { state, dispatch, status, skew };
+  return useGame(code, { create: false });
 }

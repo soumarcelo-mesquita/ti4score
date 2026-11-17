@@ -22,7 +22,7 @@ type Dispatch = (a: Action) => void;
 export default function ControllerPage() {
   const params = useParams<{ code: string }>();
   const code = normalizeCode(params.code ?? '');
-  const { state, dispatch, status, skew } = useControllerGame(code);
+  const { state, dispatch, status, error, skew } = useControllerGame(code);
   const [tab, setTab] = useState<Tab>('pontos');
   const [editingPlayers, setEditingPlayers] = useState(false);
 
@@ -31,7 +31,11 @@ export default function ControllerPage() {
       <main className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
         <p className="font-display text-2xl font-bold tracking-[0.3em] text-amber-300">{code}</p>
         <p className="text-slate-400">
-          {status === 'connecting' ? 'Conectando…' : 'Procurando a TV… Deixe a página do placar aberta na TV.'}
+          {status === 'missing'
+            ? 'Partida não encontrada. Confira o código ou abra uma nova partida na TV.'
+            : status === 'error'
+              ? `Erro ao acessar o Supabase: ${error ?? 'desconhecido'}`
+              : 'Conectando…'}
         </p>
         <Link href="/" className="text-sm text-sky-400 underline">Voltar</Link>
       </main>
@@ -89,7 +93,8 @@ function Header({ state, code, status, skew }: { state: GameState; code: string;
         <span className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${dot}`} />
           <span className="font-display tracking-[0.25em] text-slate-300">{code}</span>
-          {status === 'offline' && <span className="text-red-400">TV desconectada</span>}
+          {status === 'offline' && <span className="text-red-400">sem conexão</span>}
+          {status === 'error' && <span className="text-red-400">erro ao salvar</span>}
         </span>
         <span>
           Rodada {state.round} · <Clock state={state} skew={skew} />

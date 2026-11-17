@@ -16,7 +16,7 @@ import { PlayerHand } from '@/components/TableColumn';
 export default function TvPage() {
   const params = useParams<{ code: string }>();
   const code = normalizeCode(params.code ?? '');
-  const { state, status } = useHostGame(code);
+  const { state, status, error } = useHostGame(code);
   const [origin, setOrigin] = useState('');
 
   useEffect(() => {
@@ -31,7 +31,21 @@ export default function TvPage() {
 
   const controlUrl = origin ? `${origin}/c/${code}` : '';
 
-  if (!state) return <main className="flex-1 bg-black" />;
+  if (!state) {
+    return (
+      <main className="flex h-screen flex-col items-center justify-center gap-4 bg-black px-8 text-center">
+        {status === 'error' ? (
+          <>
+            <p className="font-display text-3xl font-bold text-red-400">Não foi possível acessar o Supabase</p>
+            <p className="max-w-3xl text-lg text-slate-400">{error}</p>
+            <p className="text-slate-500">Verifique se a tabela <code>scoreboards</code> foi criada (supabase/migrations).</p>
+          </>
+        ) : (
+          <p className="text-slate-500">Carregando partida…</p>
+        )}
+      </main>
+    );
+  }
 
   if (state.players.length === 0) {
     return (
