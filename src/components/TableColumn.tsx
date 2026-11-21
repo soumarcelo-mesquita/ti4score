@@ -14,6 +14,9 @@ function supportFilter(color: string): string {
   return `hue-rotate(${hue - SUPPORT_BASE_HUE}deg) saturate(1.25)`;
 }
 
+/** Beyond this many cards a hand is laid out in two columns. */
+const HAND_SINGLE_COLUMN_MAX = 8;
+
 /** Scored secrets, VP action cards and received Support for the Throne notes of one player. */
 export function PlayerHand({ state, playerId }: { state: GameState; playerId: string }) {
   const byId = new Map(state.players.map((p) => [p.id, p]));
@@ -24,10 +27,20 @@ export function PlayerHand({ state, playerId }: { state: GameState; playerId: st
   const custodians = (extras.custodians ?? 0) > 0;
   const imperial = extras.imperial ?? 0;
   const other = extras.other ?? 0;
-  if (secrets.length + customs.length + supports.length + (custodians ? 1 : 0) + (imperial ? 1 : 0) + (other ? 1 : 0) === 0) return null;
+  const count = secrets.length + customs.length + supports.length + (custodians ? 1 : 0) + (imperial ? 1 : 0) + (other ? 1 : 0);
+  if (count === 0) return null;
+
+  // Every card must stay visible: rows shrink to share the available height
+  // (titles drop to one line when short, see .stackcard-mini), and a very full
+  // hand splits into two columns.
+  const cols = count > HAND_SINGLE_COLUMN_MAX ? 2 : 1;
+  const rows = Math.ceil(count / cols);
 
   return (
-    <div className="hand">
+    <div
+      className="hand"
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 2.5vw))` }}
+    >
       {custodians && (
         <div className="stackcard stackcard-mini stackcard-custodians">
           <div className="stackcard-body">
